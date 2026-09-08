@@ -49,14 +49,14 @@ class Eikon {
 
 class Trait {
   +String id
-  +JSON schema
+  +lispal schema
 }
 
 class Satisfaction {
   +String subject_id
   +String trait_id
   +String predicate_id
-  +JSON value
+  +lispal value
 }
 
 class Context {
@@ -89,16 +89,29 @@ Ideaから派生した個別具象実体。親Ideaとの親子関係をID自体�
 ### Context
 パラメータの変化をスカラー値の上書きではなく、文脈付き関数 $f(x)$ の構文木の時系列シーケンスとして保持する。初期値はTrait充足時の定義値としたとき、$x$ は前回の評価値を示し、値の変化を関数合成の歴史として追跡可能にする。これにより、状態の監査可能性と因果性の説明可能性を保証する。
 
+## lispal
+文脈付きS式を表現するための非チューリング完全Lisp方言。各型は以下の関数を実装する。また、一個前の値、または初期値xが定義される。初期値xの型と返り値f(x)は型が一致することが求められる。
+
+- 共通: 第一引数を破棄し、第二引数の評価値を返却する`=`、および評価時は第二引数を返却する文脈付与`(c "<narrative>" <src>)`
+- 小数型: 四則演算`+`、`-`、`*`、`/`。ゼロ除算は終了コード1を返却して異常終了する。
+- 整数型: 小数型と同様。ただし、除算の結果が小数になった場合は切り捨てられる。小数への昇格はせず、即座に型エラーで終了する。
+- リスト型: 結合`(j <src1> <src2>)`、および0-base、半開区間のスライス`(s <from> <end> <src>)`。
+  - from/endの未定義区間へのアクセスは終了コード1を返却して異常終了する。負の数の入力は終端から数えて何番目であるかを意味する。
+  - 定義方法は`(l <element> <element> ...)`
+- 文字列型: リスト型と同様。
+- 辞書型: `(d key value key value ...)`の形式で記述し、dを0としたときの奇数要素は常にkeyとして扱われる。`(g <key> <dict>)`の形式で値を取り出し、`(i <key> <value> <dict>)`の形式で鍵と値のペアが追加された新しい辞書型を得る。
+
 ## Alex Core Utilities コマンドプロトコル
 Alex Worldに対するすべての操作は、ACUが提供する標準CLIプロトコルを通じて行われなければならない。外部ツールやゲームルールスクリプトが、バックエンドの物理ストレージを直接走査・変更する設計である場合、ACUの実装を変更した場合の結果の同一性は保証されない。
 
-### 識別子・オントロジー管理
-#### `areg [-t] [-i] [-e <idea-id> [-id <instance-id>]]`
-Alex Register。新しい要素を世界に登録し、発行されたIDを標準出力に返却する。
+#### `mktr [<trait-id>]`
+Make trait。標準入力からTraitスキーマlispalを読み込み、新規Trait IDを発行・登録する。trait-idが与えられていない場合は自動生成する。
 
-- `-t`: 標準入力からTraitスキーマJSONを読み込み、新規Trait IDを発行・登録する。
-- `-i [-id <name>]`: 新規Ideaを発行・登録する。`-id` 省略時は自動ID。
-- `-e <idea-id> [-id <instance-id>]`: 親Ideaに属する新規Eikonを発行・登録する。`-id` 指定時は `<idea-id>/<instance-id>`、省略時は `<idea-id>/<auto-hex>` を返却する。
+#### `mkei [<eikon-id>]`
+Make eikon。新規Ideaを発行・登録する。`<idea-id/>`の形式で省略した場合自動生成される。
+
+#### `mkia [<idea-id>]`
+新規ideaを発行・登録する。`<idea-id>`を省略した場合自動生成される。
 
 #### `aid [-a] [-t] [-i] [-e] <query>`
 Alex ID Search。曖昧ID・プレフィックス検索。
@@ -108,60 +121,38 @@ Alex ID Search。曖昧ID・プレフィックス検索。
 - `-e`: Eikonを検索対象に含める。
 - `<query>`が`zaku-ii/`の場合、そのIdeaに属する全Eikonが前方一致検索される。
 
-### 関係性・充足
-
-#### `sfy <subject-id> [-p <predicate-id>] <trait-id> [<satisfaction-json>]`
-Satisfy。主語に対してTraitの実装値JSONを渡し、Trait充足関係を永続化する。述語が存在する場合は `-p <predicate-id>` で指定する。検証に失敗した場合は副作用を発生させずに終了コード1を返却する。
+#### `sfy <subject-id> [-p <predicate-id>] <trait-id>`
+Satisfy。主語に対してTraitの実装値lispalを標準出力から渡し、Trait充足関係を永続化する。述語が存在する場合は `-p <predicate-id>` で指定する。検証に失敗した場合は副作用を発生させずに終了コード1を返却する。
 
 #### `dsfy <subject-id> <trait-id> [<predicate-id>]`
 De-satisfy。Traitの充足関係を解除する。`<predicate-id>` を指定した場合はその述語との関係のみを解除し、省略した場合は他エンティティからの述語参照を含め、そのTraitに関するすべての関係を一括解除する。
 
-### 状態遷移・文脈構文木
+#### `quel <trait-id> ...`
+すべてのtraitを実装したeikonを探し、行区切りでeikon-idを標準出力に出力する。
 
-#### `xt <eikon-id> <narrative> <trait-id>/<parameter-name>`
-Extend Context。EikonのContextに、変化要因narrative、および標準入力から受け取った関数 $f(x)$ の構文木を追記する。追記した結果に対してsolvを実行し、異常終了した場合、複数の書き込み対象が存在していたとしても追記を行わず、終了コード1を返却して異常終了する。
-
-#### `parm [-c] <eikon-id> <trait-id>/<parameter-name>`
-Parameter。指定したEikonのTraitおよびパラメータについて、初期値から最後に追加された関数までの合成関数の構文木を文脈付きS式として返却する。文脈付きS式は初期値によって型が規定され、型が変化した時点で終了コード1を返して異常終了する。
-各型は以下の関数を実装する。また、一個前の値、または初期値xが定義される。引数cが入力されていない場合は関数のリストを、されていれば合成関数として単一のS式を返却する。
-
-- 共通: 第一引数を破棄し、第二引数の評価値を返却する`=`、および評価時は第二引数を返却する文脈付与`(c "<narrative>" <src>)`
-- 小数型: 四則演算`+`、`-`、`*`、`/`。ゼロ除算は終了コード1を返却して異常終了する。
-- 整数型: 小数型と同様。ただし、除算の結果が小数になった場合は切り捨てられる。小数への昇格はせず、即座に型エラーで終了する。
-- リスト型: 結合`(j <src1> <src2>)`、および0-base、半開区間のスライス`(s <from> <end> <src>)`。
-  - from/endの未定義区間へのアクセスは終了コード1を返却して異常終了する。負の数の入力は終端から数えて何番目であるかを意味する。
-  - 定義方法は`(l <element> <element> ...)`
-- 文字列型: リスト型と同様。
-
-### ドキュメント
-
-#### `wkig -i <idea-id> [-a] [-o <output-path>]`
-Wiki Generate。IdeaのWikiテキストを結合・生成して出力する。`-i <idea-id>` で指定したIdea、または `-a` で全Ideaを対象とする。`-o <output-path>` で出力先ファイルパスを指定でき、省略時は標準出力に出力する。
-
-### 構文木・評価・確率
+#### `pred <eikon-id> <trait-id>`
+eikon-idで指定されたeikonに充足されているtraitの述語となっている行区切りでeikon-idを標準出力に出力する。
 
 #### `mars <infix-formula>`
 Marshalling Yard。中置記法で記述された数式を構文木に変換する。構文木の形式はAlex Protocolでは定義されないが、solvおよびparmが解釈できる形式であることが求められる。
 
-#### `solv [<ast>]`
-Solve。構文木を引数または標準入力から受け取り、評価・簡約して最終的な数値を標準出力に返却する。
+#### `xt <eikon-id> <trait-id>/<parameter-name>`
+Extend Context。EikonのContextに、標準入力から受け取ったlispal式をc関数ごとの合成関数$f_{c1} \circ f_{c2} \circ \cdots \circ f_{c3}$として解釈し、各関数を一行に対応させたlispal式を追記する。最上位の関数呼び出しは常にc関数であることが求められる。
 
-#### `rando [<weight> <command>] ...`
-Random Do。重み付き確率判定に基づいてコマンドを子プロセスとして実行する。
+#### `parm <eikon-id> <trait-id>/<parameter-name>`
+Parameter。指定したEikonのTraitおよびパラメータについて、lispal式が一行に一つ書き込まれた文字列を標準出力に出力する。
+
+#### `circ`
+標準入力に入力された、1行に1つのlispal式が書き込まれた文字列を受け取り、一行の合成関数に畳み込む。
+
+#### `solv`
+Solve。lispal式を標準入力から受け取り、評価して最終的な数値を標準出力に返却する。
+
+#### `wkig -i <idea-id> [-a] [-o <output-path>]`
+Wiki Generate。IdeaのMediaWikiテキストをtocに従って結合して標準出力に出力する。`-i <idea-id>` で指定したIdea、または `-a` で全Ideaを対象とする。
 
 #### `dice [<min>] <max>`
 Dice。指定された範囲からランダムな整数を1つ出力する。最小値の省略時は1とする。
-
-### クライアント・境界ツール
-
-#### `alexc <who> <what>`
-Alex Client。Eikon IDである `<who>` と行動意思テキスト `<what>` から、行動要求の標準ワンライナーJSONを生成する。
-
-#### `orch`
-Orchestrate。標準入力から行動要求JSONを受け取り、要求キューに蓄積する。
-
-#### `wmux <llm_url> <flush_target> ...`
-Willing Multiplexer。Orchestratorの思考エンジン。Toolbox内の利用可能コマンド群をコンテキストとして与えながら、蓄積された要求キューをUnixコマンドの実行計画に変換する。
 
 #### `tox <eikon-id>`
 Toolbox。指定されたEikon専用の隔離実行環境であるToolboxのパスを返却する。ディレクトリはオンデマンドで生成される。
